@@ -46,22 +46,24 @@ jobs:
         run: |
           ssh-keygen -t rsa -b 4096 -f id_rsa -N ""
 
-      - name: Create cloud-init config
+      - name: Create Ignition config
         run: |
-          cat > user-data <<EOF
-          #cloud-config
-          users:
-            - name: clouduser
-              sudo: ALL=(ALL) NOPASSWD:ALL
-              groups: wheel
-              shell: /bin/bash
-              ssh_authorized_keys:
-                - $(cat id_rsa.pub)
-          ssh_pwauth: false
-          disable_root: true
-          EOF
+          PUBKEY=$(cat id_rsa.pub)
 
-          cloud-localds seed.iso user-data
+          cat > config.ign <<EOF
+          {
+            "ignition": { "version": "3.4.0" },
+            "passwd": {
+              "users": [
+                {
+                  "name": "core",
+                  "sshAuthorizedKeys": ["$PUBKEY"],
+                  "groups": ["wheel"]
+                }
+              ]
+            }
+          }
+          EOF
 
       - name: Start fedora43 VM
         run: |
@@ -71,8 +73,7 @@ jobs:
             -machine type=q35,accel=tcg \
             -cpu max \
             -drive file=fedora43.img,format=qcow2,if=virtio \
-            -drive file=seed.iso,format=raw,if=virtio \
-            -boot c \
+            -fw_cfg name=opt/com.coreos/config,file=config.ign \
             -netdev user,id=net0,hostfwd=tcp::2222-:22 \
             -device virtio-net-pci,netdev=net0 \
             -nographic \
@@ -88,7 +89,7 @@ jobs:
               -o StrictHostKeyChecking=no \
               -o ConnectTimeout=2 \
               -o BatchMode=yes \
-              -p 2222 clouduser@localhost "echo ready" >/dev/null 2>&1; then
+              -p 2222 core@localhost "echo ready" >/dev/null 2>&1; then
               echo "✅ SSH is fully ready"
               exit 0
             fi
@@ -104,7 +105,7 @@ jobs:
 
       - name: Run Trivy scan inside VM
         run: |
-          ssh -i id_rsa -p 2222 clouduser@localhost <<'EOF'
+          ssh -i id_rsa -p 2222 core@localhost <<'EOF'
           set -e
           curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh
           sudo ./bin/trivy rootfs / \
@@ -117,7 +118,7 @@ jobs:
         run: |
           scp -i id_rsa -P 2222 \
             -o StrictHostKeyChecking=no \
-            clouduser@localhost:/tmp/report.sarif \
+            core@localhost:/tmp/report.sarif \
             report.sarif
 
       - name: Stop VM
