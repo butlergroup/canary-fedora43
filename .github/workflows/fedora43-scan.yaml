@@ -39,7 +39,7 @@ jobs:
       - name: Download image
         run: |
           curl -L --retry 5 -o fedora43.raw.xz \
-            https://builds.coreos.fedoraproject.org/prod/streams/stable/builds/43.20260413.3.2/x86_64/fedora-coreos-43.20260413.3.2-openstack.x86_64.qcow2.xz
+            https://builds.coreos.fedoraproject.org/prod/streams/stable/builds/43.20260413.3.2/x86_64/fedora-coreos-43.20260413.3.2-qemu.x86_64.qcow2.xz
           unxz fedora43.raw.xz
           qemu-img convert -O qcow2 fedora43.raw fedora43.img
       - name: Generate SSH key
