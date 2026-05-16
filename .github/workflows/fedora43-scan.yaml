@@ -6,7 +6,7 @@ permissions:
 on:
   workflow_dispatch:
   push:
-    branches: ["main"]
+    branches: [ "main" ]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -43,29 +43,32 @@ jobs:
 
       - name: Download image
         run: |
-          curl -L --retry 5 -o fedora43.img \
-            https://insect.mm.fcix.net/fedora/linux/releases/43/Cloud/x86_64/images/Fedora-Cloud-Base-Generic-43-1.6.x86_64.qcow2
-
+          curl -L --retry 5 -o fedora43.raw.xz \
+            https://builds.coreos.fedoraproject.org/prod/streams/stable/builds/43.20260413.3.2/x86_64/fedora-coreos-43.20260413.3.2-qemu.x86_64.qcow2.xz
+          unxz fedora43.raw.xz
+          qemu-img convert -O qcow2 fedora43.raw fedora43.img
       - name: Generate SSH key
         run: |
           ssh-keygen -t rsa -b 4096 -f id_rsa -N ""
 
-      - name: Create cloud-init config
+      - name: Create Ignition config
         run: |
-          cat > user-data <<EOF
-          #cloud-config
-          users:
-            - name: clouduser
-              sudo: ALL=(ALL) NOPASSWD:ALL
-              groups: wheel
-              shell: /bin/bash
-              ssh_authorized_keys:
-                - $(cat id_rsa.pub)
-          ssh_pwauth: false
-          disable_root: true
-          EOF
+          PUBKEY=$(cat id_rsa.pub)
 
-          cloud-localds seed.iso user-data
+          cat > config.ign <<EOF
+          {
+            "ignition": { "version": "3.4.0" },
+            "passwd": {
+              "users": [
+                {
+                  "name": "core",
+                  "sshAuthorizedKeys": ["$PUBKEY"],
+                  "groups": ["wheel"]
+                }
+              ]
+            }
+          }
+          EOF
 
       - name: Start fedora43 VM
         run: |
@@ -75,8 +78,7 @@ jobs:
             -machine type=q35,accel=tcg \
             -cpu max \
             -drive file=fedora43.img,format=qcow2,if=virtio \
-            -drive file=seed.iso,format=raw,if=virtio \
-            -boot c \
+            -fw_cfg name=opt/com.coreos/config,file=config.ign \
             -netdev user,id=net0,hostfwd=tcp::2222-:22 \
             -device virtio-net-pci,netdev=net0 \
             -nographic \
@@ -92,7 +94,7 @@ jobs:
               -o StrictHostKeyChecking=no \
               -o ConnectTimeout=2 \
               -o BatchMode=yes \
-              -p 2222 clouduser@localhost "echo ready" >/dev/null 2>&1; then
+              -p 2222 core@localhost "echo ready" >/dev/null 2>&1; then
               echo "✅ SSH is fully ready"
               exit 0
             fi
@@ -108,7 +110,7 @@ jobs:
 
       - name: Generate SBOM inside VM
         run: |
-          ssh -i id_rsa -p 2222 clouduser@localhost <<'EOF'
+          ssh -i id_rsa -p 2222 core@localhost <<'EOF'
           set -e
 
           # Install Trivy
@@ -125,7 +127,7 @@ jobs:
         run: |
           scp -i id_rsa -P 2222 \
             -o StrictHostKeyChecking=no \
-            clouduser@localhost:/tmp/sbom.json \
+            core@localhost:/tmp/sbom.json \
             sbom.json
 
       - name: Install Trivy on runner
@@ -145,6 +147,6 @@ jobs:
           kill $(cat vm.pid) || true
 
       - name: Upload SARIF to GitHub Security
-        uses: github/codeql-action/upload-sarif@9e0d7b8d25671d64c341c19c0152d693099fb5ba # v4.35.5
+        uses: github/codeql-action/upload-sarif@68bde559dea0fdcac2102bfdf6230c5f70eb485e # v4.35.4
         with:
           sarif_file: report.sarif
